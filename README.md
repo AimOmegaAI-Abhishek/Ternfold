@@ -1,17 +1,25 @@
 # Ternfold — Margin Decision Desk
 
-Persistent, human-reviewed order-margin workspace for the documented India/INR back-to-back MVP.
+Persistent, human-reviewed order-margin workspace for the documented India/INR back-to-back MVP. All application records use Supabase PostgreSQL; there is no local database fallback.
 
-## Open the synthetic demo
+## Configure Supabase
 
-Open PowerShell in this folder and run:
+Create `%LOCALAPPDATA%\Ternfold\.env` and add the Supabase Session pooler URI:
+
+```text
+SUPABASE_DATABASE_URL=postgresql://postgres.PROJECT_REF:DATABASE_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+```
+
+The configured database password must be URL-encoded when it contains URI-reserved characters.
+
+## Setup and run
 
 ```powershell
 .\ternfold.ps1 Setup
 .\ternfold.ps1 Start
 ```
 
-Open <http://127.0.0.1:8000/login>. Setup creates a separate PostgreSQL 18 cluster under `%LOCALAPPDATA%\Ternfold` on port `55432`; it does not touch a server on port 5432.
+Open <http://127.0.0.1:8000/login>. `Setup` applies Alembic migrations to Supabase and creates the labelled synthetic demonstration records. It never creates or starts a local database.
 
 All synthetic accounts use password `TernfoldDemo!`:
 
@@ -22,40 +30,24 @@ All synthetic accounts use password `TernfoldDemo!`:
 | Decision owner | `meera@example.test` |
 | Purchasing | `kavita@example.test` |
 
-Follow [DEMO_GUIDE.md](DEMO_GUIDE.md) for the repeatable sales walkthrough.
+Follow [DEMO_GUIDE.md](DEMO_GUIDE.md) for the sales walkthrough.
 
-## Everyday commands
+## Commands
 
 ```powershell
+.\ternfold.ps1 Setup
 .\ternfold.ps1 Start
 .\ternfold.ps1 Stop
 .\ternfold.ps1 Status
-.\ternfold.ps1 Test
 .\ternfold.ps1 Reset-Demo
 .\ternfold.ps1 Apply-Retention
 ```
 
-`Test` uses the separate `ternfold_test` database and `tmp\test-storage`. It cannot alter the live demo case. `Reset-Demo` refuses to run if the selected database contains any non-synthetic organization. It deletes and recreates synthetic records only.
+`Reset-Demo` refuses to run if the selected Supabase database contains a non-synthetic organization. Database changes run through Alembic during `Setup`.
 
-Database changes run through Alembic during `Setup` (`alembic upgrade head`). Evidence and reports are private application files under `%LOCALAPPDATA%\Ternfold\storage` in the local profile.
+## Optional AI extraction
 
-## Supabase and optional AI
-
-Run local `Setup` once to create `%LOCALAPPDATA%\Ternfold\.env` from `.env.example`. Real credentials go in that local file, outside OneDrive. Put the Supabase session-pooler connection string in `SUPABASE_DATABASE_URL`. For extraction, choose one provider:
-
-```text
-TERNFOLD_AI_PROVIDER=openrouter
-OPENROUTER_API_KEY=...
-```
-
-or:
-
-```text
-TERNFOLD_AI_PROVIDER=anthropic
-ANTHROPIC_API_KEY=...
-```
-
-or NVIDIA NIM's OpenAI-compatible endpoint:
+The same private `.env` can select one provider:
 
 ```text
 TERNFOLD_AI_PROVIDER=nvidia
@@ -63,9 +55,6 @@ NVIDIA_API_KEY=...
 NVIDIA_MODEL=deepseek-ai/deepseek-v4-pro-0813
 ```
 
-Use `.\ternfold-supabase.ps1 Setup` and `.\ternfold-supabase.ps1 Start` after the connection string is present. The ordinary `ternfold.ps1` launcher keeps using isolated local PostgreSQL for offline demonstrations.
+OpenRouter and Anthropic adapters are also supported. The core reviewed workflow and deterministic calculations do not require an AI key. Model output is saved only as a draft and never confirms applicability or calculates contribution.
 
-The core workflow and deterministic calculations do not need an AI key. PDF/image values can always be entered beside their source; CSV input creates unconfirmed proposals. Live model output is saved only as a draft and never confirms applicability or calculates contribution.
-
-See [OPERATIONS.md](OPERATIONS.md) for setup, retention and pilot boundaries, and [REQUIREMENTS_VERIFICATION.md](REQUIREMENTS_VERIFICATION.md) for the release evidence.
-
+See [OPERATIONS.md](OPERATIONS.md) for retention and pilot boundaries and [REQUIREMENTS_VERIFICATION.md](REQUIREMENTS_VERIFICATION.md) for verification evidence.

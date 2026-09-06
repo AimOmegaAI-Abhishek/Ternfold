@@ -1,8 +1,8 @@
 # Requirement-to-verification record
 
-Release: local MVP, 5 September 2026. Automated command: `.\ternfold.ps1 Test` against PostgreSQL 18 (`ternfold_test`). Browser evidence: complete A-107 workflow inspected at 1440×900, 390×844 and 320-pixel width; exported version-2 PDF rendered and visually inspected.
+Release baseline: 5 September 2026. The original automated suite passed before the Supabase-only migration. Database integration checks must be rerun against a dedicated Supabase test project before release. Browser evidence: complete A-107 workflow inspected at 1440×900, 390×844 and 320-pixel width; exported version-2 PDF rendered and visually inspected.
 
-Status meanings: **Passed** ran successfully; **Partial** has working local behavior but retains a stated pilot gap; **Untested** was not run and is not claimed.
+Status meanings: **Passed** ran successfully; **Partial** has working baseline behavior but retains a stated pilot gap; **Untested** was not run and is not claimed.
 
 | ID | Source requirement | Status | Verification evidence / remaining limitation |
 |---|---|---|---|
@@ -19,10 +19,10 @@ Status meanings: **Passed** ran successfully; **Partial** has working local beha
 | V11 | S §§6–7 | Partial | Duplicate upload/decision retries create no duplicate; model system instruction treats document text as data. No live-provider adversarial test ran without credentials. |
 | V12 | S §§2,5; X §§5–7 | Passed | Required Proceed rationale and ₹5,200 actual freight reconcile to ₹22,800 / 11.40% without changing v2. |
 | V13 | S §§3,7; X §6 | Partial | PDF values/version/people/rationale match frozen records; refresh/restart and retention deletion passed. External backup restore remains a deployment test. |
-| A1 | B §3; S §§1–3 | Passed locally | Eligible case creation, persistence, owners/deadlines and upload/line caps are implemented; service deadline remains manual. |
-| A2 | B §3; S §§3–4,7 | Passed locally | Source viewer, evidence attestations, reviewer confirmation and immutable publication work. |
-| A3 | S §7; V §§1,3 | Partial | Tenant authorization, private local storage, closure and retention work. External encryption/restore and customer terms remain pilot gates. |
-| A4 | B §6; X §§2,7–8 | Passed locally | Complete desktop/mobile owner journey, separate statuses, keyboard focus, visible recovery and no-change path inspected. |
+| A1 | B §3; S §§1–3 | Passed in baseline | Eligible case creation, persistence, owners/deadlines and upload/line caps are implemented; service deadline remains manual. |
+| A2 | B §3; S §§3–4,7 | Passed in baseline | Source viewer, evidence attestations, reviewer confirmation and immutable publication work. |
+| A3 | S §7; V §§1,3 | Partial | Tenant authorization, tenant authorization and retention controls, closure and retention work. External encryption/restore and customer terms remain pilot gates. |
+| A4 | B §6; X §§2,7–8 | Passed in baseline | Complete desktop/mobile owner journey, separate statuses, keyboard focus, visible recovery and no-change path inspected. |
 | A5 | B §5; S §7; V §4 | Partial | Setup, reset, migration, retention and handover instructions exist. Real delivery/effort and commercial evidence do not exist yet. |
 
 ## Experience checks
@@ -37,10 +37,11 @@ Status meanings: **Passed** ran successfully; **Partial** has working local beha
 | E6 | Passed | Proceed below floor requires and displays Meera’s reason. |
 | E7 | Passed | Reconciliation remains separate from the frozen decision. |
 | E8 | Passed | Downloaded PDF and copied handoff carry reviewed v2 terms. |
-| E9 | Passed locally | Upload/model fallback, saved states and mobile layouts give recovery actions. |
+| E9 | Passed in baseline | Upload/model fallback, saved states and mobile layouts give recovery actions. |
 
 ## Readiness
 
-- **Ready to demonstrate locally:** yes, with synthetic data and manual review.
+- **Ready to demonstrate with Supabase:** blocked until the configured Supabase database password authenticates and the P0 database checks are rerun.
 - **Ready for an assisted external pilot:** no; the external gates in `OPERATIONS.md` are unresolved and deployment tests are unrun.
 - **Commercially validated:** no; there is no real payment, customer delivery or repeat-use evidence.
+

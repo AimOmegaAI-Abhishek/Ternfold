@@ -15,9 +15,9 @@ class Base(DeclarativeBase):
     pass
 
 def database_url() -> str:
-    value = os.getenv("TERNFOLD_DATABASE_URL") or os.getenv("SUPABASE_DATABASE_URL")
+    value = os.getenv("SUPABASE_DATABASE_URL")
     if not value:
-        return "postgresql+psycopg://postgres@127.0.0.1:55432/ternfold"
+        raise RuntimeError("SUPABASE_DATABASE_URL is required. Ternfold does not support a local database.")
     if value.startswith("postgres://"):
         value = "postgresql://" + value.removeprefix("postgres://")
     if value.startswith("postgresql://") and "+psycopg" not in value:
@@ -34,3 +34,4 @@ def get_db() -> Generator[Session, None, None]:
 def init_database() -> None:
     from . import models  # noqa
     Base.metadata.create_all(engine)
+
