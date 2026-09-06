@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pypdfium2 as pdfium
 from PIL import Image
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +27,16 @@ from .storage_routes import active_reservations, check_capacity, register_storag
 
 ROOT=Path(__file__).resolve().parent
 app=FastAPI(title="Ternfold Margin Decision Desk",docs_url=None,redoc_url=None)
+
+@app.exception_handler(HTTPException)
+async def browser_authentication_error(request: Request, exc: HTTPException):
+    # Browser page visits need a sign-in screen; API calls and writes retain 401.
+    if exc.status_code == 401 and request.method in {"GET", "HEAD"} and "text/html" in request.headers.get("accept", ""):
+        response = RedirectResponse("/login", status_code=303)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return await http_exception_handler(request, exc)
+
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 templates=Jinja2Templates(directory=ROOT/"templates")
 templates.env.filters.update(money=fmt_money,pct=fmt_pct)
