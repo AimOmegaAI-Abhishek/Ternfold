@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Cases{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Decision workspace</p><h1>Orders needing a clear next step</h1></div>
+{% if membership %}<a class="primary button" href="/cases/new">Create case</a>{% endif %}</div>
+<div class="status-note"><span class="dot"></span>{{ ai.message }}</div>
+{% if cases %}
+<section class="case-list" aria-label="Cases">
+{% for case in cases %}<a class="case-row" href="/cases/{{ case.id }}">
+  <div><span class="eyebrow">{{ orgs[case.organization_id].name }}</span><h2>{{ case.reference }}</h2></div>
+  <div><small>Acts next</small><strong>{{ case.next_actor }}</strong></div>
+  <div><small>Purchasing deadline</small><strong>{{ case.purchase_deadline|ist_short }}</strong></div>
+  <div class="status-pair"><span class="status workflow">{{ case.workflow_status.replace('_',' ').title() }}</span><span class="status financial {{ case.financial_status|lower }}">{{ case.financial_status.replace('_',' ').title() }}</span></div>
+  <span class="arrow" aria-hidden="true">→</span>
+</a>{% endfor %}
+</section>
+{% else %}<div class="empty"><h2>No cases yet</h2><p>Create an eligible INR back-to-back order to begin.</p></div>{% endif %}
+{% endblock %}

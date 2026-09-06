@@ -1,0 +1,14 @@
+.venv/
+.runtime/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pyc
+*.log
+.env
+output/
+tmp/
+*.docx
+*.pptx
+/Margin_Decision_Desk_Pricing.pdf

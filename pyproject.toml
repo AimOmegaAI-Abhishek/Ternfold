@@ -1,0 +1,10 @@
+[project]
+name = "ternfold"
+version = "0.1.0"
+description = "Margin Decision Desk local MVP"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

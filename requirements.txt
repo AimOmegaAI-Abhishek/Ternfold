@@ -1,0 +1,16 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+sqlalchemy>=2.0,<3
+psycopg[binary]>=3.2,<4
+alembic>=1.15,<2
+jinja2>=3.1,<4
+python-multipart>=0.0.20,<1
+argon2-cffi>=23.1,<26
+reportlab>=4.2,<5
+pypdfium2>=4.30,<6
+pillow>=11,<13
+pypdf>=5,<7
+httpx>=0.28,<1
+pytest>=8.3,<10
+pytest-cov>=6,<8
+python-dotenv>=1,<2

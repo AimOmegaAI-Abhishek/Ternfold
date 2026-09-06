@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Ternfold{% endblock %} · Margin Decision Desk</title>
+  <script>
+    window.setTernfoldTheme=function(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem("ternfold-theme",theme)}catch{}var button=document.querySelector(".theme-toggle");if(button){var dark=theme==="dark";button.setAttribute("aria-pressed",String(dark));button.setAttribute("aria-label","Switch to "+(dark?"light":"dark")+" mode");button.querySelector(".theme-icon").textContent=dark?"☀":"☾";button.querySelector(".theme-label").textContent=dark?"Light mode":"Dark mode"}};
+    try{document.documentElement.dataset.theme=localStorage.getItem("ternfold-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{document.documentElement.dataset.theme="light"}
+  </script>
+  <link rel="stylesheet" href="/static/app.css?v=20260905d"><script defer src="/static/app.js?v=20260905d"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  {% if user %}
+  <div class="demo-bar">Synthetic demonstration · no customer data · controlled date {{ demo_date }}</div>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">T</span><span>Ternfold<small>Margin Decision Desk</small></span></a>
+    <div class="identity"><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span>
+      <button class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false" onclick="setTernfoldTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">Dark mode</span></button>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link-button">Sign out</button></form>
+    </div>
+  </header>
+  {% endif %}
+  <main id="main" class="{% block mainclass %}shell{% endblock %}">
+    {% if notice %}<div class="notice {{ notice_kind }}" role="status">{{ notice }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body></html>

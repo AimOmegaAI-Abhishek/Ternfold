@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block title %}Sign in{% endblock %}{% block mainclass %}login-shell{% endblock %}
+{% block content %}
+<section class="login-card">
+  <div class="brand login-brand"><span class="brand-mark">T</span><span>Ternfold<small>Margin Decision Desk</small></span></div>
+  <p class="eyebrow">Synthetic local demonstration</p><h1>Open a decision workspace</h1>
+  <p class="lede">Use a named role to follow order A-107 from missing freight to a reviewed Purchasing handoff.</p>
+  {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <label>Email<input required name="email" type="email" autocomplete="username" value="rohan@example.test"></label>
+    <label>Password<input required name="password" type="password" autocomplete="current-password" value="TernfoldDemo!"></label>
+    <button class="primary">Sign in securely</button>
+  </form>
+  <div class="demo-accounts"><strong>Demo accounts</strong>
+    <button type="button" data-email="rohan@example.test">Rohan · Operations</button>
+    <button type="button" data-email="reviewer@ternfold.test">Ananya · Reviewer</button>
+    <button type="button" data-email="meera@example.test">Meera · Owner</button>
+    <button type="button" data-email="kavita@example.test">Kavita · Purchasing</button>
+  </div>
+  <p class="muted">All accounts use <code>TernfoldDemo!</code>. Live AI: {{ ai.message }}</p>
+</section>
+{% endblock %}

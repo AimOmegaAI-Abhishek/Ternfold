@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}New case{% endblock %}
+{% block content %}
+<a class="back" href="/">← Cases</a><div class="page-heading"><div><p class="eyebrow">New case</p><h1>Check an order before purchase</h1><p class="lede">Confirm the scope first. Unsupported cases receive an explicit reason.</p></div></div>
+<form method="post" action="/cases" class="form-card stack"><input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-grid"><label>Order reference<input name="reference" required placeholder="A-108"></label><label>Decision owner<select name="decision_owner_id">{% for owner in owners %}<option value="{{ owner.id }}">{{ owner.name }}</option>{% endfor %}</select></label>
+  <label>Purchasing contact<input name="purchasing_contact" required placeholder="Kavita Rao"></label><label>Purchasing deadline<input name="purchase_deadline" required type="datetime-local"></label>
+  <label>Agreed report deadline <small>Manually agreed</small><input name="service_deadline" type="datetime-local"></label><label>Currency<select name="currency"><option>INR</option><option>USD</option></select></label></div>
+  <fieldset><legend>Purchase basis</legend><label class="check"><input type="radio" name="purchase_basis" value="back_to_back" checked> Goods bought specifically for this order</label><label class="check"><input type="radio" name="purchase_basis" value="stock"> Mixed stock or inventory valuation</label></fieldset>
+  <div class="scope-box"><strong>Included</strong><span>India · INR · back-to-back · up to 15 lines · 10 files</span></div>
+  <button class="primary">Create eligible case</button>
+</form>{% endblock %}
