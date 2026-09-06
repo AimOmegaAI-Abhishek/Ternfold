@@ -50,11 +50,11 @@ Follow [DEMO_GUIDE.md](DEMO_GUIDE.md) for the sales walkthrough.
 The same private `.env` can select one provider:
 
 ```text
-TERNFOLD_AI_PROVIDER=nvidia
-NVIDIA_API_KEY=...
-NVIDIA_MODEL=deepseek-ai/deepseek-v4-pro-0813
+TERNFOLD_AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
 ```
 
-OpenRouter and Anthropic adapters are also supported. The core reviewed workflow and deterministic calculations do not require an AI key. Model output is saved only as a draft and never confirms applicability or calculates contribution.
+OpenRouter is selected automatically when its key is present and no provider is named. NVIDIA NIM and Anthropic adapters remain supported. The core reviewed workflow and deterministic calculations do not require an AI key. Model output is saved only as a draft and never confirms applicability or calculates contribution.
 
 See [OPERATIONS.md](OPERATIONS.md) for retention and pilot boundaries and [REQUIREMENTS_VERIFICATION.md](REQUIREMENTS_VERIFICATION.md) for verification evidence.

@@ -50,6 +50,16 @@ def test_nvidia_without_key_keeps_manual_fallback(monkeypatch):
         ai.propose_from_text(SOURCE)
 
 
+def test_openrouter_key_selects_requested_default_model(monkeypatch):
+    monkeypatch.delenv('TERNFOLD_AI_PROVIDER', raising=False)
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-key')
+    monkeypatch.delenv('OPENROUTER_MODEL', raising=False)
+    status = ai.extraction_status()
+    assert status['provider'] == 'openrouter'
+    assert status['model'] == 'nvidia/nemotron-3-ultra-550b-a55b:free'
+    assert status['available'] is True
+
+
 @pytest.mark.parametrize('invalid', [
     'not JSON', {'freight': '5000'},
     {'fields': [{'name': 'freight', 'value': '5000', 'source': None}]},
