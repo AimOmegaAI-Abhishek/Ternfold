@@ -35,7 +35,7 @@ if($Command -eq 'Start'){
   if(-not $Health){ Get-Content (Join-Path $LogDir 'web-error.log') -Tail 30; throw 'Ternfold did not connect to Supabase.' }
   $Listener=Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
   if($Listener){ Set-Content -LiteralPath $PidFile -Value $Listener.OwningProcess }
-  Write-Output "Ternfold running with Supabase: http://127.0.0.1:8000/login (live AI=$($Health.ai))"
+  Write-Output "Ternfold running with Supabase: http://127.0.0.1:8000/login (AI configured=$($Health.ai_configured))"
   exit
 }
 if($Command -eq 'Stop'){

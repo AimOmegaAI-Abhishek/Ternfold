@@ -1,7 +1,7 @@
 from __future__ import annotations
 import csv, hashlib, io, json, os
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -14,14 +14,15 @@ from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from .ai import extraction_status, propose_from_text
+from .ai import extraction_status, propose_from_text, validate_draft
 from .auth import COOKIE, create_session, csrf_for, current_user, password_ok, require_user, token_hash, verify_csrf
 from .db import get_db
 from .finance import CalculationBlocked, calculate, completeness, dec, fmt_money, fmt_pct, line_amount
 from .fixtures import add_doc, demo_data
 from .models import (AuditEvent,CalculationVersion,Case,Decision,EvidenceReference,ExtractionDraft,InputQuestion,Membership,Organization,Outcome,ReportArtifact,ReviewerAssignment,Review,SessionToken,SourceDocument,User,now_utc)
 from .reports import decision_pdf
-from .storage import storage
+from .storage import StorageUnavailable, storage
+from .storage_routes import active_reservations, check_capacity, register_storage_routes, store_document
 
 ROOT=Path(__file__).resolve().parent
 app=FastAPI(title="Ternfold Margin Decision Desk",docs_url=None,redoc_url=None)
@@ -41,8 +42,8 @@ def identity(request:Request,db:Session)->tuple[User,Membership|None,bool]:
     reviewer=db.scalar(select(ReviewerAssignment).where(ReviewerAssignment.user_id==user.id,ReviewerAssignment.active.is_(True))) is not None
     return user,membership,reviewer
 
-def case_access(db:Session,user:User,case_id:str,write_role:str|None=None)->tuple[Case,Membership|None,bool]:
-    case=db.get(Case,case_id)
+def case_access(db:Session,user:User,case_id:str,write_role:str|None=None,lock:bool=False)->tuple[Case,Membership|None,bool]:
+    case=db.scalar(select(Case).where(Case.id==case_id).with_for_update()) if lock else db.get(Case,case_id)
     if not case: raise HTTPException(404,"Case not found")
     membership=db.scalar(select(Membership).where(Membership.organization_id==case.organization_id,Membership.user_id==user.id,Membership.active.is_(True)))
     reviewer=db.scalar(select(ReviewerAssignment).where(ReviewerAssignment.organization_id==case.organization_id,ReviewerAssignment.user_id==user.id,ReviewerAssignment.active.is_(True))) is not None
@@ -66,7 +67,7 @@ def effective_working_data(db:Session,case:Case)->dict:
     return working
 
 @app.get("/health")
-def health(db:Session=Depends(get_db)): db.execute(select(1)); return {"status":"ok","database":"postgresql","ai":extraction_status()["available"]}
+def health(db:Session=Depends(get_db)): db.execute(select(1)); return {"status":"ok","database":"supabase","ai_configured":extraction_status()["available"],"ai":extraction_status()["available"]}
 
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request:Request,db:Session=Depends(get_db)):
@@ -76,7 +77,7 @@ def login_page(request:Request,db:Session=Depends(get_db)):
 @app.post("/login")
 def login(request:Request,email:str=Form(...),password:str=Form(...),db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(func.lower(User.email)==email.strip().lower()))
-    if not user or not password_ok(user.password_hash,password): return templates.TemplateResponse(request=request,name="login.html",context=context(request,db,error="Email or password is incorrect."),status_code=400)
+    if not user or not user.active or not password_ok(user.password_hash,password): return templates.TemplateResponse(request=request,name="login.html",context=context(request,db,error="Email or password is incorrect."),status_code=400)
     raw,_=create_session(db,user); db.commit(); response=RedirectResponse("/",303)
     response.set_cookie(COOKIE,raw,httponly=True,samesite="lax",secure=os.getenv("TERNFOLD_SECURE_COOKIES")=="1",max_age=43200)
     return response
@@ -116,7 +117,7 @@ def create_case(request:Request,reference:str=Form(...),decision_owner_id:str=Fo
     else: reason=None; status="DRAFT"
     owner=db.scalar(select(Membership).where(Membership.organization_id==membership.organization_id,Membership.user_id==decision_owner_id,Membership.role=="OWNER"))
     if not owner: raise HTTPException(400,"Choose an owner from this organization.")
-    try: pd=datetime.fromisoformat(purchase_deadline).replace(tzinfo=timezone.utc); sd=datetime.fromisoformat(service_deadline).replace(tzinfo=timezone.utc) if service_deadline else None
+    try: pd=datetime.fromisoformat(purchase_deadline).replace(tzinfo=ZoneInfo("Asia/Kolkata")).astimezone(timezone.utc); sd=datetime.fromisoformat(service_deadline).replace(tzinfo=ZoneInfo("Asia/Kolkata")).astimezone(timezone.utc) if service_deadline else None
     except ValueError: raise HTTPException(400,"Enter valid deadlines.")
     case=Case(organization_id=membership.organization_id,reference=reference.strip(),decision_owner_id=decision_owner_id,purchasing_contact=purchasing_contact.strip(),purchase_deadline=pd,proposed_purchase_at=pd,service_deadline=sd,workflow_status=status,unsupported_reason=reason,next_actor="Operations",working_data={},synthetic=False)
     db.add(case); db.flush(); db.add(AuditEvent(organization_id=case.organization_id,case_id=case.id,actor_id=user.id,action="CASE_CREATED",detail={"scope":status})); db.commit()
@@ -153,43 +154,32 @@ def validate_upload(filename:str,content_type:str,data:bytes)->str:
 
 @app.post("/cases/{case_id}/upload")
 async def upload(case_id:str,request:Request,category:str=Form(...),validity_end:str=Form(""),csrf:str=Form(...),file:UploadFile=File(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer",lock=True); verify_csrf(request,db,csrf)
     docs=list(db.scalars(select(SourceDocument).where(SourceDocument.case_id==case.id)))
     data=await file.read(10_000_001)
     try:
-        ctype=validate_upload(file.filename or "evidence",file.content_type or "",data)
-        if len(docs)>=10: raise ValueError("This case already has the maximum 10 evidence files. Existing evidence was preserved.")
-        if sum(d.size_bytes for d in docs)+len(data)>50_000_000: raise ValueError("Adding this file would exceed the 50 MB case limit. Existing evidence was preserved.")
-        valid=datetime.fromisoformat(validity_end).replace(tzinfo=timezone.utc) if validity_end else None
+        validate_upload(file.filename or "evidence",file.content_type or "",data)
+        check_capacity(docs,active_reservations(db,case.id),len(data))
+        valid=datetime.fromisoformat(validity_end).replace(tzinfo=ZoneInfo("Asia/Kolkata")).astimezone(timezone.utc) if validity_end else None
         digest=hashlib.sha256(data).hexdigest()
         duplicate=next((doc for doc in docs if doc.sha256==digest),None)
         if duplicate: return flash_redirect(f"/cases/{case.id}",f"This file already exists in the case as {duplicate.filename}; no duplicate was created.")
-        material_change=Path(file.filename or "").suffix.lower()==".csv" or category in {"current_supplier","revised_supplier"}
-        if material_change: case.working_revision+=1
-        if case.current_calculation_id and material_change: case.current_calculation_id=None; case.financial_status="NOT_EVALUATED"
-        key,digest=storage.put(f"org/{case.organization_id}/case/{case.id}",Path(file.filename or "").suffix,data)
-        source=SourceDocument(case_id=case.id,organization_id=case.organization_id,category=category,filename=file.filename or "evidence",content_type=ctype,size_bytes=len(data),sha256=digest,storage_key=key,uploaded_by_id=user.id,validity_end=valid,revision_added=case.working_revision)
-        db.add(source); db.flush()
-        if Path(source.filename).suffix.lower()==".csv":
-            working=case.working_data.copy(); working["lines"]=parse_csv_lines(data)
-            for flag in ("tax_basis_confirmed","matching_confirmed","applicability_confirmed","baseline_comparable"): working.setdefault(flag,False)
-            for side in ("original","current"):
-                for key2 in ("freight","handling","other"): working.setdefault(f"{side}_{key2}_status","unknown")
-            case.working_data=working
-        case.workflow_status="NEEDS_INPUT"; case.next_actor="Operations / reviewer"
-        db.add(AuditEvent(organization_id=case.organization_id,case_id=case.id,actor_id=user.id,action="DOCUMENT_UPLOADED",detail={"document_id":source.id,"category":category,"hash":digest}))
+        source=store_document(db,case,user,filename=file.filename or "evidence",category=category,validity_end=valid,data=data,storage=storage,validate_upload=validate_upload,parse_csv_lines=parse_csv_lines)
         db.commit(); return flash_redirect(f"/cases/{case.id}",f"{source.filename} saved. Review what is still needed.")
-    except ValueError as exc:
+    except (ValueError,StorageUnavailable) as exc:
         db.rollback(); return flash_redirect(f"/cases/{case.id}",str(exc),"error")
 
 @app.post("/cases/{case_id}/freight")
 def answer_freight(case_id:str,request:Request,freight_status:str=Form(...),amount:str=Form(""),source_note:str=Form(...),expected_revision:int=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer",lock=True); verify_csrf(request,db,csrf)
     if expected_revision!=case.working_revision: return flash_redirect(f"/cases/{case.id}","The case changed in another session. Your text was not applied; review the latest revision.","error")
     try:
+        if freight_status not in {"included","confirmed"} or not source_note.strip(): raise ValueError("Choose a freight status and describe its evidence.")
         value="0" if freight_status=="included" else str(dec(amount))
     except ValueError as exc: return flash_redirect(f"/cases/{case.id}",str(exc),"error")
-    working=case.working_data.copy(); working["current_freight_status"]=freight_status; working["current_freight"]=value; case.working_data=working
+    if case.current_calculation_id or case.working_data.get("review_confirmed"):
+        case.working_revision+=1; case.current_calculation_id=None; case.financial_status="NOT_EVALUATED"
+    working=case.working_data.copy(); working["review_confirmed"]=False; working["current_freight_status"]=freight_status; working["current_freight"]=value; case.working_data=working
     for q in db.scalars(select(InputQuestion).where(InputQuestion.case_id==case.id,InputQuestion.revision==case.working_revision,InputQuestion.field_key=="current_freight",InputQuestion.resolved_at.is_(None))): q.resolved_at=now_utc(); q.answer=source_note
     db.add(EvidenceReference(case_id=case.id,field_key="current_freight",locator="Named attestation",excerpt=source_note,attested_by_id=user.id))
     case.workflow_status="READY_FOR_REVIEW" if not completeness(working) else "NEEDS_INPUT"; case.next_actor="Assigned reviewer" if case.workflow_status=="READY_FOR_REVIEW" else "Operations"
@@ -226,7 +216,7 @@ def input_page(case_id:str,request:Request,db:Session=Depends(get_db)):
 
 @app.post("/cases/{case_id}/inputs")
 async def save_inputs(case_id:str,request:Request,db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer")
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer",lock=True)
     if case.workflow_status=="UNSUPPORTED": raise HTTPException(400,"Unsupported cases cannot receive material inputs")
     form=await request.form(); verify_csrf(request,db,str(form.get("csrf","")))
     note=str(form.get("source_note","")).strip()
@@ -261,7 +251,7 @@ async def save_inputs(case_id:str,request:Request,db:Session=Depends(get_db)):
 
 @app.post("/cases/{case_id}/review/confirm")
 def confirm_review(case_id:str,request:Request,expected_revision:int=Form(...),notes:str=Form(""),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"reviewer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"reviewer",lock=True); verify_csrf(request,db,csrf)
     if expected_revision!=case.working_revision: return flash_redirect(f"/cases/{case.id}/review","The case changed. Refresh before confirming.","error")
     working=case.working_data.copy()
     for key in ("tax_basis_confirmed","matching_confirmed","applicability_confirmed","baseline_comparable"): working[key]=True
@@ -274,12 +264,16 @@ def confirm_review(case_id:str,request:Request,expected_revision:int=Form(...),n
 
 @app.post("/cases/{case_id}/review/publish")
 def publish_review(case_id:str,request:Request,expected_revision:int=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"reviewer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"reviewer",lock=True); verify_csrf(request,db,csrf)
     if expected_revision!=case.working_revision: return flash_redirect(f"/cases/{case.id}/review","The case changed. Refresh before publishing.","error")
     if not case.working_data.get("review_confirmed"): return flash_redirect(f"/cases/{case.id}/review","Confirm the material inputs before publishing.","error")
     org=db.get(Organization,case.organization_id)
     try: result=calculate(effective_working_data(db,case),org.min_contribution_pct,org.erosion_warning_pp)
     except CalculationBlocked as exc: return flash_redirect(f"/cases/{case.id}/review",exc.messages[0],"error")
+    if case.current_calculation_id:
+        return flash_redirect(f"/cases/{case.id}","This working revision has already been published.")
+    result["case_context"]={"reference":case.reference,"purchase_deadline":case.purchase_deadline.isoformat(),"owner_name":db.get(User,case.decision_owner_id).name,"reviewer_name":user.name}
+    result["evidence"]=[{"id":d.id,"sha256":d.sha256,"filename":d.filename,"revision":d.revision_added} for d in db.scalars(select(SourceDocument).where(SourceDocument.case_id==case.id,SourceDocument.deleted_at.is_(None)))]
     version=(db.scalar(select(func.max(CalculationVersion.version_number)).where(CalculationVersion.case_id==case.id)) or 0)+1
     calc=CalculationVersion(case_id=case.id,organization_id=org.id,version_number=version,working_revision=case.working_revision,snapshot=result,revenue=result["revenue"],original_cost=result["original_cost"],current_cost=result["current_cost"],original_contribution=result["original_contribution"],current_contribution=result["current_contribution"],original_pct=result["original_pct"],current_pct=result["current_pct"],erosion_rupees=result["erosion_rupees"],erosion_pp=result["erosion_pp"],financial_status=result["financial_status"],reviewer_id=user.id)
     db.add(calc); db.flush(); case.current_calculation_id=calc.id; case.workflow_status="REVIEWED"; case.financial_status=calc.financial_status; case.next_actor="Decision owner"
@@ -288,7 +282,7 @@ def publish_review(case_id:str,request:Request,expected_revision:int=Form(...),c
 
 @app.post("/cases/{case_id}/decision")
 def record_decision(case_id:str,request:Request,choice:str=Form(...),rationale:str=Form(...),purchasing_action:str=Form(...),expected_revision:int=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"owner"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"owner",lock=True); verify_csrf(request,db,csrf)
     if expected_revision!=case.working_revision or not case.current_calculation_id: return flash_redirect(f"/cases/{case.id}","This reviewed basis changed. Fresh review is required before a decision.","error")
     if choice not in {"PROCEED","SEEK_REVISED_TERMS","WAIT","DO_NOT_PROCEED"} or not rationale.strip() or not purchasing_action.strip(): return flash_redirect(f"/cases/{case.id}","Record the choice, reason and purchasing action.","error")
     calc=db.get(CalculationVersion,case.current_calculation_id)
@@ -306,11 +300,11 @@ def record_decision(case_id:str,request:Request,choice:str=Form(...),rationale:s
 
 @app.post("/cases/{case_id}/revised-demo")
 def revised_demo(case_id:str,request:Request,expected_revision:int=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer",lock=True); verify_csrf(request,db,csrf)
     if not case.synthetic: raise HTTPException(404)
     if expected_revision!=case.working_revision: return flash_redirect(f"/cases/{case.id}","The case changed. Review the latest revision.","error")
     case.working_revision+=1; case.working_data=demo_data(freight_known=True,revised=True); case.current_calculation_id=None; case.workflow_status="READY_FOR_REVIEW"; case.financial_status="NOT_EVALUATED"; case.next_actor="Assigned reviewer"
-    valid=datetime(2026,9,30,18,29,tzinfo=timezone.utc)
+    valid=case.proposed_purchase_at+timedelta(days=28)
     doc=add_doc(db,case,user,"revised_supplier","A-107_revised_supplier_offer.pdf","Revised supplier offer",["Contactors INR 860 x 100","Relays INR 520 x 100","Terminal kits INR 340 x 100","Additional freight INR 5,000. Same specification and delivery terms."],valid)
     db.add(EvidenceReference(case_id=case.id,source_document_id=doc.id,field_key="revised_goods_and_freight",locator="Page 1",excerpt="Goods INR 1,72,000 plus freight INR 5,000."))
     db.add(AuditEvent(organization_id=case.organization_id,case_id=case.id,actor_id=user.id,action="REVISED_TERMS_ADDED",detail={"revision":case.working_revision,"document_id":doc.id})); db.commit()
@@ -318,10 +312,14 @@ def revised_demo(case_id:str,request:Request,expected_revision:int=Form(...),csr
 
 @app.post("/cases/{case_id}/outcome")
 def record_outcome(case_id:str,request:Request,actual_goods:str=Form(...),actual_freight:str=Form(...),notes:str=Form(""),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer"); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,_,_=case_access(db,user,case_id,"customer",lock=True); verify_csrf(request,db,csrf)
     decision=db.scalar(select(Decision).where(Decision.case_id==case.id).order_by(Decision.recorded_at.desc()))
     if not decision: return flash_redirect(f"/cases/{case.id}","Record a customer decision before adding actual costs.","error")
-    calc=db.get(CalculationVersion,decision.calculation_id); goods=dec(actual_goods).quantize(Decimal(".01")); freight=dec(actual_freight).quantize(Decimal(".01")); revenue=Decimal(calc.snapshot["revenue"]); contribution=revenue-goods-freight; pct=contribution/revenue*100 if revenue>0 else None
+    calc=db.get(CalculationVersion,decision.calculation_id)
+    try:
+        goods=dec(actual_goods).quantize(Decimal(".01"),rounding=ROUND_HALF_UP); freight=dec(actual_freight).quantize(Decimal(".01"),rounding=ROUND_HALF_UP)
+    except ValueError as exc: return flash_redirect(f"/cases/{case.id}",str(exc),"error")
+    revenue=Decimal(calc.snapshot["revenue"]); contribution=revenue-goods-freight; pct=contribution/revenue*100 if revenue>0 else None
     db.add(Outcome(case_id=case.id,decision_id=decision.id,actual_goods=goods,actual_freight=freight,actual_contribution=contribution,actual_pct=pct,notes=notes,recorded_by_id=user.id))
     case.workflow_status="OUTCOME_CAPTURED"; db.add(AuditEvent(organization_id=case.organization_id,case_id=case.id,actor_id=user.id,action="OUTCOME_CAPTURED",detail={"decision_id":decision.id})); db.commit()
     return flash_redirect(f"/cases/{case.id}","Actual costs reconciled without changing the decision-time snapshot.")
@@ -348,17 +346,16 @@ def extract_document(document_id:str,request:Request,csrf:str=Form(...),db:Sessi
             reader=PdfReader(io.BytesIO(raw)); pages=[]
             for index,page in enumerate(reader.pages[:20],1): pages.append(f"[PAGE {index}]\n{page.extract_text() or ''}")
             source_text="\n".join(pages)
-        elif doc.content_type=="text/csv": source_text=raw.decode("utf-8-sig")
+        elif doc.content_type=="text/csv": source_text="\n".join(f"[ROW {i}]\n{row}" for i,row in enumerate(raw.decode("utf-8-sig").splitlines(),1))
         else: return flash_redirect(f"/documents/{doc.id}","Live text extraction supports text PDFs and CSVs. Use the visible source for manual review.","error")
-        if not source_text.strip(): raise ValueError("No machine-readable text was found.")
+        if not source_text.strip() or (doc.content_type=="application/pdf" and not any((p.extract_text() or "").strip() for p in reader.pages[:20])): raise ValueError("No machine-readable text was found.")
         result=propose_from_text(source_text[:60000])
-        try: proposals=json.loads(result)
-        except json.JSONDecodeError: proposals={"raw_response":result}
+        proposals=validate_draft(result,source_text[:60000])
         draft=ExtractionDraft(case_id=case.id,source_document_id=doc.id,requested_by_id=user.id,provider=status["provider"],model=status["model"],status="SUCCEEDED",proposals=proposals)
         db.add(draft); db.add(AuditEvent(organization_id=case.organization_id,case_id=case.id,actor_id=user.id,action="EXTRACTION_DRAFT_CREATED",detail={"document_id":doc.id,"provider":status["provider"]})); db.commit()
         return flash_redirect(f"/cases/{case.id}","AI draft saved for review. No material value was confirmed automatically.")
     except Exception as exc:
-        db.add(ExtractionDraft(case_id=case.id,source_document_id=doc.id,requested_by_id=user.id,provider=status["provider"],model=status["model"],status="FAILED",proposals={},error=str(exc)[:500])); db.commit()
+        db.add(ExtractionDraft(case_id=case.id,source_document_id=doc.id,requested_by_id=user.id,provider=status["provider"],model=status["model"],status="FAILED",proposals={},error=f"{type(exc).__name__}: extraction did not produce a usable source-linked draft")); db.commit()
         return flash_redirect(f"/documents/{doc.id}","Extraction failed. The source is preserved and manual review remains available.","error")
 
 @app.get("/documents/{document_id}/preview")
@@ -382,6 +379,8 @@ def document_download(document_id:str,request:Request,db:Session=Depends(get_db)
     if not doc: raise HTTPException(404)
     case_access(db,user,doc.case_id)
     if doc.deleted_at: raise HTTPException(410,"This source was deleted under the retention agreement.")
+    signed=storage.signed_download(doc.storage_key,doc.filename)
+    if signed: return RedirectResponse(signed,status_code=307)
     return Response(storage.read(doc.storage_key),media_type=doc.content_type,headers={"Content-Disposition":f'attachment; filename="{doc.filename.replace(chr(34),"")}"'})
 
 @app.get("/reports/{report_id}/download")
@@ -390,7 +389,10 @@ def report_download(report_id:str,request:Request,db:Session=Depends(get_db)):
     if not report: raise HTTPException(404)
     case,_membership,_reviewer=case_access(db,user,report.case_id)
     calc=db.get(CalculationVersion,report.calculation_id)
-    return Response(storage.read(report.storage_key),media_type="application/pdf",headers={"Content-Disposition":f'attachment; filename="Ternfold_{case.reference}_v{calc.version_number}_decision.pdf"'})
+    filename=f"Ternfold_{case.reference}_v{calc.version_number}_decision.pdf"
+    signed=storage.signed_download(report.storage_key,filename)
+    if signed: return RedirectResponse(signed,status_code=307)
+    return Response(storage.read(report.storage_key),media_type="application/pdf",headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
 @app.get("/cases/{case_id}/settings",response_class=HTMLResponse)
 def settings_page(case_id:str,request:Request,db:Session=Depends(get_db)):
@@ -403,15 +405,21 @@ def settings_page(case_id:str,request:Request,db:Session=Depends(get_db)):
 def save_settings(case_id:str,request:Request,min_pct:str=Form(...),erosion_pp:str=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
     user=require_user(request,db); case,membership,_=case_access(db,user,case_id); verify_csrf(request,db,csrf)
     if not membership or membership.role!="OWNER": raise HTTPException(403)
-    org=db.get(Organization,case.organization_id); new_floor=dec(min_pct); new_erosion=dec(erosion_pp)
+    org=db.scalar(select(Organization).where(Organization.id==case.organization_id).with_for_update())
+    try: new_floor=dec(min_pct); new_erosion=dec(erosion_pp)
+    except ValueError as exc: return flash_redirect(f"/cases/{case.id}/settings",str(exc),"error")
     changed=org.min_contribution_pct!=new_floor or org.erosion_warning_pp!=new_erosion; org.min_contribution_pct=new_floor; org.erosion_warning_pp=new_erosion
-    if changed and case.current_calculation_id: case.working_revision+=1; case.current_calculation_id=None; case.workflow_status="READY_FOR_REVIEW"; case.financial_status="NOT_EVALUATED"; case.next_actor="Assigned reviewer"
+    if changed:
+        for affected in db.scalars(select(Case).where(Case.organization_id==org.id,Case.closed_at.is_(None)).order_by(Case.id).with_for_update()):
+            if affected.workflow_status=="UNSUPPORTED": continue
+            affected.working_revision+=1; affected.current_calculation_id=None; affected.workflow_status="NEEDS_INPUT"; affected.financial_status="NOT_EVALUATED"; affected.next_actor="Assigned reviewer"
+            affected.working_data={**affected.working_data,"review_confirmed":False}
     db.add(AuditEvent(organization_id=org.id,case_id=case.id,actor_id=user.id,action="THRESHOLDS_CHANGED",detail={"floor":str(new_floor),"erosion_pp":str(new_erosion)})); db.commit()
     return flash_redirect(f"/cases/{case.id}/settings","Settings saved. Any affected decision basis now requires fresh review.")
 
 @app.post("/cases/{case_id}/service-closure")
 def close_service_case(case_id:str,request:Request,action:str=Form(...),csrf:str=Form(...),db:Session=Depends(get_db)):
-    user=require_user(request,db); case,membership,_=case_access(db,user,case_id); verify_csrf(request,db,csrf)
+    user=require_user(request,db); case,membership,_=case_access(db,user,case_id,lock=True); verify_csrf(request,db,csrf)
     if not membership or membership.role!="OWNER": raise HTTPException(403)
     if action=="close":
         if not db.scalar(select(Decision.id).where(Decision.case_id==case.id)): return flash_redirect(f"/cases/{case.id}/settings","Record a decision before closing the service case.","error")
@@ -426,3 +434,5 @@ def close_service_case(case_id:str,request:Request,action:str=Form(...),csrf:str
 def line_template(request:Request,db:Session=Depends(get_db)):
     require_user(request,db); text="item,qty,unit,spec,sell_unit,original_buy_unit,current_buy_unit\n"
     return Response(text,media_type="text/csv",headers={"Content-Disposition":'attachment; filename="ternfold_line_template.csv"'})
+
+register_storage_routes(app,require_user=require_user,verify_csrf=verify_csrf,case_access=case_access,validate_upload=validate_upload,parse_csv_lines=parse_csv_lines,storage=storage)

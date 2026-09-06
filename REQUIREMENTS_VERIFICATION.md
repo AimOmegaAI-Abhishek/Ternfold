@@ -41,7 +41,7 @@ Status meanings: **Passed** ran successfully; **Partial** has working baseline b
 
 ## Readiness
 
-- **Ready to demonstrate with Supabase:** blocked until the configured Supabase database password authenticates and the P0 database checks are rerun.
+- **Ready to demonstrate locally with Supabase:** yes for the synthetic workflow. The full PostgreSQL-backed test suite and the desktop/mobile browser walkthrough passed on 6 September 2026. Live AI completion is not claimed: the configured NVIDIA request reached the provider but timed out, and the verified manual fallback preserved the source and case work.
 - **Ready for an assisted external pilot:** no; the external gates in `OPERATIONS.md` are unresolved and deployment tests are unrun.
 - **Commercially validated:** no; there is no real payment, customer delivery or repeat-use evidence.
 

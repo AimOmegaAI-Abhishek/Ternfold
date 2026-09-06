@@ -7,7 +7,7 @@
     window.setTernfoldTheme=function(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem("ternfold-theme",theme)}catch{}var button=document.querySelector(".theme-toggle");if(button){var dark=theme==="dark";button.setAttribute("aria-pressed",String(dark));button.setAttribute("aria-label","Switch to "+(dark?"light":"dark")+" mode");button.querySelector(".theme-icon").textContent=dark?"☀":"☾";button.querySelector(".theme-label").textContent=dark?"Light mode":"Dark mode"}};
     try{document.documentElement.dataset.theme=localStorage.getItem("ternfold-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{document.documentElement.dataset.theme="light"}
   </script>
-  <link rel="stylesheet" href="/static/app.css?v=20260905d"><script defer src="/static/app.js?v=20260905d"></script>
+  <link rel="stylesheet" href="/static/app.css?v=20260906b"><script defer src="/static/app.js?v=20260906a"></script><script defer src="/static/upload.js?v=20260906a"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>

@@ -196,3 +196,5 @@ class EffortEntry(Base):
     actor_id: Mapped[str]=mapped_column(ForeignKey("users.id")); category: Mapped[str]=mapped_column(String(40))
     minutes: Mapped[int]=mapped_column(Integer); measurement: Mapped[str]=mapped_column(String(20))
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now_utc)
+
+from . import storage_upload_models  # noqa: E402,F401

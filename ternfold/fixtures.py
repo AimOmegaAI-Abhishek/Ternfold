@@ -1,5 +1,6 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import os
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen.canvas import Canvas
@@ -11,7 +12,7 @@ from .models import (AuditEvent,CalculationVersion,Case,Decision,EvidenceReferen
 from .storage import storage
 
 DEMO_PASSWORD="TernfoldDemo!"
-DEMO_NOW=datetime(2026,9,3,9,0,tzinfo=timezone.utc)
+DEMO_NOW=datetime.fromisoformat(os.getenv("TERNFOLD_DEMO_DATE",datetime.now(timezone.utc).date().isoformat())).replace(hour=9,tzinfo=timezone.utc)
 
 def demo_data(current:bool=True,freight_known:bool=False,revised:bool=False)->dict:
     buys=[("Contactor LC1D","100","nos","18A, 415V","1000","850","890" if not revised else "860"),
@@ -64,8 +65,8 @@ def seed_demo(db:Session)->dict:
         Membership(organization_id=org.id,user_id=users["kavita"].id,role="CONTRIBUTOR",title="Purchasing"),
         Membership(organization_id=other.id,user_id=users["outsider"].id,role="OWNER",title="Owner"),
         ReviewerAssignment(organization_id=org.id,user_id=users["reviewer"].id)])
-    valid=datetime(2026,9,30,18,29,tzinfo=timezone.utc); deadline=datetime(2026,9,5,10,0,tzinfo=timezone.utc)
-    case=Case(organization_id=org.id,reference="A-107",decision_owner_id=users["meera"].id,purchasing_contact="Kavita Rao",purchase_deadline=deadline,proposed_purchase_at=deadline,service_deadline=datetime(2026,9,4,10,0,tzinfo=timezone.utc),workflow_status="NEEDS_INPUT",financial_status="INCOMPLETE",next_actor="Rohan - Operations",working_data=demo_data(),synthetic=True)
+    valid=DEMO_NOW+timedelta(days=30); deadline=DEMO_NOW+timedelta(days=2)
+    case=Case(organization_id=org.id,reference="A-107",decision_owner_id=users["meera"].id,purchasing_contact="Kavita Rao",purchase_deadline=deadline,proposed_purchase_at=deadline,service_deadline=DEMO_NOW+timedelta(days=1),workflow_status="NEEDS_INPUT",financial_status="INCOMPLETE",next_actor="Rohan - Operations",working_data=demo_data(),synthetic=True)
     db.add(case); db.flush()
     order=add_doc(db,case,users["rohan"],"accepted_order","A-107_accepted_order.pdf","Accepted customer order A-107",["100 Contactors at INR 1,000 net each","100 Relays at INR 600 net each","100 Terminal kits at INR 400 net each","Confirmed consistent net tax basis."],valid)
     original=add_doc(db,case,users["rohan"],"original_costing","A-107_original_costing.pdf","Original comparable costing",["Contactors INR 850 x 100","Relays INR 510 x 100","Terminal kits INR 340 x 100","Delivered terms: freight included."],valid)
